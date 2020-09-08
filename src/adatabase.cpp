@@ -11,7 +11,7 @@ ADatabase::ADatabase()
 
 }
 
-ADatabase::ADatabase(const QUrl &connectionInfo)
+ADatabase::ADatabase(const QString &connectionInfo)
     : d(new ADatabasePrivate(connectionInfo))
 {
 
@@ -24,7 +24,7 @@ ADatabase::ADatabase(const ADatabase &other)
 
 ADatabase::~ADatabase()
 {
-//    qDebug(ASQL_PG) << "~ADatabase()";
+
 }
 
 bool ADatabase::isValid()
@@ -38,10 +38,19 @@ void ADatabase::open(std::function<void(bool error, const QString &fff)> cb)
         d->driver->open(cb);
     } else {
         if (cb) {
-            cb(true, QString());
+            cb(false, QString());
         }
-        return;
     }
+}
+
+ADatabase::State ADatabase::state() const
+{
+    return d->driver->state();
+}
+
+void ADatabase::onStateChanged(std::function<void (ADatabase::State, const QString &)> cb)
+{
+    d->driver->onStateChanged(cb);
 }
 
 bool ADatabase::isOpen() const
@@ -66,10 +75,20 @@ void ADatabase::rollback(AResultFn cb, QObject *receiver)
 
 void ADatabase::exec(const QString &query, AResultFn cb, QObject *receiver)
 {
-    d->driver->exec(d, query, cb, receiver);
+    d->driver->exec(d, query, QVariantList(), cb, receiver);
+}
+
+void ADatabase::execPrepared(const APreparedQuery &query, AResultFn cb, QObject *receiver)
+{
+    d->driver->exec(d, query, QVariantList(), cb, receiver);
 }
 
 void ADatabase::exec(const QString &query, const QVariantList &params, AResultFn cb, QObject *receiver)
+{
+    d->driver->exec(d, query, params, cb, receiver);
+}
+
+void ADatabase::execPrepared(const APreparedQuery &query, const QVariantList &params, AResultFn cb, QObject *receiver)
 {
     d->driver->exec(d, query, params, cb, receiver);
 }
@@ -90,9 +109,16 @@ ADatabase &ADatabase::operator =(const ADatabase &copy)
     return *this;
 }
 
-ADatabasePrivate::ADatabasePrivate(const QUrl &ci)
+ADatabasePrivate::ADatabasePrivate(const QString &ci)
     : connectionInfo(ci)
 {
     driver = new ADriverPg;
     driver->setConnectionInfo(ci);
+}
+
+ADatabasePrivate::~ADatabasePrivate()
+{
+    if (driver) {
+        driver->deleteLater();
+    }
 }

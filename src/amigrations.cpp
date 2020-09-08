@@ -45,15 +45,11 @@ void AMigrations::load(const ADatabase &db, const QString &name)
                                   )V0G0N"),
                    [=] (AResult &result) {
         if (result.error()) {
-            qDebug() << "Create migrations table" << result.errorString();
+            qDebug(ASQL_MIG) << "Create migrations table" << result.errorString();
         }
 
-        d_ptr->db.exec(QStringLiteral(R"V0G0N(
-                                      INSERT INTO asql_migrations VALUES ($1, 0)
-                                      ON CONFLICT (name) DO NOTHING
-                                      RETURNING version
-                                      )V0G0N"), {name},
-                       [=] (AResult &result2) {
+        d_ptr->db.exec(QStringLiteral("SELECT version FROM asql_migrations WHERE name=$1"),
+                       {name}, [=] (AResult &result2) {
             if (result2.error()) {
                 Q_EMIT ready(true, result2.errorString());
                 return;
@@ -61,6 +57,8 @@ void AMigrations::load(const ADatabase &db, const QString &name)
 
             if (result2.next()) {
                 d_ptr->active = result2.value(0).toInt();
+            } else {
+                d_ptr->active = 0;
             }
             Q_EMIT ready(false, QString());
         }, this);
@@ -105,11 +103,11 @@ void AMigrations::fromString(const QString &text)
     QString line;
     while (!stream.atEnd()) {
         stream.readLineInto(&line);
-        qDebug() << "MIG LINE" << line << upWay << version;
+        qDebug(ASQL_MIG) << "MIG LINE" << line << upWay << version;
         QRegularExpressionMatch match = re.match(line);
         if (match.hasMatch()) {
             const QStringRef way = match.capturedRef(2);
-            qDebug() << "CAPTURE" << way << match.capturedRef(1).toInt();
+            qDebug(ASQL_MIG) << "CAPTURE" << way << match.capturedRef(1).toInt();
             if (way.compare(QStringLiteral("up"), Qt::CaseInsensitive) == 0) {
                 upWay = true;
                 version = match.capturedRef(1).toInt();
@@ -122,10 +120,10 @@ void AMigrations::fromString(const QString &text)
             latest = qMax(latest, version);
         } else if (version) {
             if (upWay) {
-                qDebug() << "UP" << version << line;
+                qDebug(ASQL_MIG) << "UP" << version << line;
                 up[version].append(line + QLatin1Char('\n'));
             } else {
-                qDebug() << "DOWN" << version << line;
+                qDebug(ASQL_MIG) << "DOWN" << version << line;
                 down[version].append(line + QLatin1Char('\n'));
             }
         }
@@ -167,13 +165,13 @@ QString AMigrations::sqlFor(int versionFrom, int versionTo) const
     return ret;
 }
 
-void AMigrations::migrate(std::function<void(bool, const QString &)> cb)
+void AMigrations::migrate(std::function<void(bool, const QString &)> cb, bool dryRun)
 {
     Q_D(AMigrations);
-    migrate(d->latest, cb);
+    migrate(d->latest, cb, dryRun);
 }
 
-void AMigrations::migrate(int version, std::function<void(bool, const QString &)> cb)
+void AMigrations::migrate(int version, std::function<void(bool, const QString &)> cb, bool dryRun)
 {
     Q_D(AMigrations);
     if (version < 0) {
@@ -223,10 +221,15 @@ void AMigrations::migrate(int version, std::function<void(bool, const QString &)
                     }
                     return;
                 }
-            });
+            }, this);
 
-            d->db.exec(QStringLiteral("UPDATE asql_migrations SET version = $1 WHERE name = $2;"),
-            {version, d->name}, [=] (AResult &result) {
+            d->db.exec(QStringLiteral(R"V0G0N(
+                                      INSERT INTO asql_migrations VALUES ($1, $2)
+                                      ON CONFLICT (name) DO UPDATE
+                                      SET version=EXCLUDED.version
+                                      RETURNING version
+                                      )V0G0N"),
+            {d->name, version}, [=] (AResult &result) {
                 if (result.error()) {
                     if (cb) {
                         cb(true, result.errorString());
@@ -234,8 +237,7 @@ void AMigrations::migrate(int version, std::function<void(bool, const QString &)
                     return;
                 }
 
-                ATransaction tFinal(t);
-                tFinal.commit([=] (AResult &result) {
+                auto tAction = [=] (AResult &result) {
                     if (result.error()) {
                         if (cb) {
                             cb(true, result.errorString());
@@ -245,7 +247,13 @@ void AMigrations::migrate(int version, std::function<void(bool, const QString &)
                             cb(false, QString());
                         }
                     }
-                });
+                };
+
+                if (!dryRun) {
+                    ATransaction(t).commit(tAction, this);
+                } else {
+                    ATransaction(t).rollback(tAction, this);
+                }
             }, this);
         }, this);
     });

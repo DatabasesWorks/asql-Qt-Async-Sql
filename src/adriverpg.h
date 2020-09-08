@@ -5,6 +5,7 @@
 #include <libpq-fe.h>
 
 #include "aresult.h"
+#include "apreparedquery.h"
 
 #include <QQueue>
 #include <QPointer>
@@ -47,12 +48,14 @@ public:
     APGQuery() : result(QSharedPointer<AResultPg>(new AResultPg))
     { }
     QString query;
+    APreparedQuery preparedQuery;
     QSharedPointer<AResultPg> result;
     QVariantList params;
     AResultFn cb;
     QSharedPointer<ADatabasePrivate> db;
     QPointer<QObject> receiver;
     QObject *checkReceiver;
+    bool preparing = false;
 
     inline void done() {
         AResult r(result);
@@ -64,6 +67,7 @@ public:
 
 class ADriverPg : public ADriver
 {
+    Q_OBJECT
 public:
     ADriverPg();
     virtual ~ADriverPg();
@@ -71,12 +75,16 @@ public:
     virtual void open(std::function<void(bool isOpen, const QString &error)> cb) override;
     virtual bool isOpen() const override;
 
+    void setState(ADatabase::State state, const QString &status);
+    virtual ADatabase::State state() const override;
+    virtual void onStateChanged(std::function<void(ADatabase::State state, const QString &status)> cb) override;
+
     virtual void begin(QSharedPointer<ADatabasePrivate> db, AResultFn cb, QObject *receiver) override;
     virtual void commit(QSharedPointer<ADatabasePrivate> db, AResultFn cb, QObject *receiver) override;
     virtual void rollback(QSharedPointer<ADatabasePrivate> db, AResultFn cb, QObject *receiver) override;
 
-    virtual bool exec(QSharedPointer<ADatabasePrivate> db, const QString &query, AResultFn cb, QObject *receiver) override;
-    virtual bool exec(QSharedPointer<ADatabasePrivate> db, const QString &query, const QVariantList &params, AResultFn cb, QObject *receiver) override;
+    virtual void exec(QSharedPointer<ADatabasePrivate> db, const QString &query, const QVariantList &params, AResultFn cb, QObject *receiver) override;
+    virtual void exec(QSharedPointer<ADatabasePrivate> db, const APreparedQuery &query, const QVariantList &params, AResultFn cb, QObject *receiver) override;
 
     virtual void subscribeToNotification(QSharedPointer<ADatabasePrivate> db, const QString &name, ANotificationFn cb, QObject *receiver) override;
     virtual void unsubscribeFromNotification(QSharedPointer<ADatabasePrivate> db, const QString &name, QObject *receiver) override;
@@ -89,12 +97,15 @@ private:
     inline void doExecParams(APGQuery &query);
 
     PGconn *m_conn = nullptr;
+    ADatabase::State m_state = ADatabase::Disconnected;
     bool m_connected = false;
     bool m_queryRunning = false;
+    std::function<void (ADatabase::State, const QString &)> m_stateChangedCb;
     QHash<QString, ANotificationFn> m_subscribedNotifications;
     QQueue<APGQuery> m_queuedQueries;
-    QSocketNotifier *m_writeNotify;
-    QSocketNotifier *m_readNotify;
+    QSocketNotifier *m_writeNotify = nullptr;
+    QSocketNotifier *m_readNotify = nullptr;
+    QStringList m_preparedQueries;
 };
 
 #endif // ADRIVERPG_H

@@ -8,8 +8,8 @@
 class ADatabasePrivate
 {
 public:
-    ADatabasePrivate(const QUrl &ci);
-    ~ADatabasePrivate() = default;
-    QUrl connectionInfo;
+    ADatabasePrivate(const QString &ci);
+    ~ADatabasePrivate();
+    QString connectionInfo;
     ADriver *driver;
 };

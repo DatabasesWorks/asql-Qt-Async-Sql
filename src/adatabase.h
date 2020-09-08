@@ -14,10 +14,19 @@ class AResult;
 typedef std::function<void(AResult &row)> AResultFn;
 typedef std::function<void(const QString &payload, bool self)> ANotificationFn;
 
+class APreparedQuery;
 class ADatabasePrivate;
 class ASQL_EXPORT ADatabase
 {
+    Q_GADGET
 public:
+    enum State {
+        Disconnected,
+        Connecting,
+        Connected
+    };
+    Q_ENUM(State)
+
     /*!
      * \brief ADatabase contructs an invalid database object
      */
@@ -32,7 +41,7 @@ public:
      * * Username and database "postgresql://username@/db2"
      * * Username, host, database and options "postgresql://username@example.com/db3/bng?target_session_attrs=read-write"
      */
-    ADatabase(const QUrl &connectionInfo);
+    ADatabase(const QString &connectionInfo);
 
     ADatabase(const ADatabase &other);
 
@@ -50,7 +59,18 @@ public:
      * either by success or failure, with \param describing the error.
      * \param cb
      */
-    void open(std::function<void(bool isOpen, const QString &error)> cb);
+    void open(std::function<void(bool isOpen, const QString &error)> cb = {});
+
+    State state() const;
+
+    /*!
+     * \brief onStateChanged the callback is called once connection state changes
+     *
+     * Only one callback can be registeres per database
+     *
+     * \param cb
+     */
+    void onStateChanged(std::function<void(State state, const QString &status)> cb);
 
     /*!
      * \brief isOpen returns if the database connection is open.
@@ -83,7 +103,7 @@ public:
     void rollback(AResultFn cb = {}, QObject *receiver = nullptr);
 
     /*!
-     * \brief exec ecutes a \param query against this database connection,
+     * \brief exec excutes a \param query against this database connection,
      * once done AResult object will have the retrieved data if any, always
      * check for AResult::error() to see if the query was successful.
      *
@@ -99,7 +119,20 @@ public:
     void exec(const QString &query, AResultFn cb, QObject *receiver = nullptr);
 
     /*!
-     * \brief exec ecutes a \param query against this database connection,
+     * \brief exec executes a prepared \param query against this database connection,
+     * once done AResult object will have the retrieved data if any, always
+     * check for AResult::error() to see if the query was successful.
+     *
+     * \note For proper usage of APreparedQuery see it's documentation.
+     * \note Postgres does not allow for multiple commands on prepared queries.
+     *
+     * \param query
+     * \param cb
+     */
+    void execPrepared(const APreparedQuery &query, AResultFn cb, QObject *receiver = nullptr);
+
+    /*!
+     * \brief exec executes a \param query against this database connection,
      * once done AResult object will have the retrieved data if any, always
      * check for AResult::error() to see if the query was successful.
      *
@@ -108,6 +141,20 @@ public:
      * \param cb
      */
     void exec(const QString &query, const QVariantList &params, AResultFn cb, QObject *receiver = nullptr);
+
+    /*!
+     * \brief exec executes a prepared \param query against this database connection
+     * with the following \p params to be bound,
+     * once done AResult object will have the retrieved data if any, always
+     * check for AResult::error() to see if the query was successful.
+     *
+     * \note For proper usage of APreparedQuery see it's documentation.
+     * \note Postgres does not allow for multiple commands on prepared queries.
+     *
+     * \param query
+     * \param cb
+     */
+    void execPrepared(const APreparedQuery &query, const QVariantList &params, AResultFn cb, QObject *receiver = nullptr);
 
     /*!
      * \brief subscribeToNotification will start listening for notifications

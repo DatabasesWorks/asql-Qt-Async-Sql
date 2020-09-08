@@ -6,7 +6,7 @@
 Q_LOGGING_CATEGORY(ASQL_POOL, "asql.pool", QtInfoMsg)
 
 typedef struct {
-    QUrl connectionInfo;
+    QString connectionInfo;
     QVector<ADatabasePrivate *> pool;
     int maxIdleConnections = 1;
 } APoolInternal;
@@ -20,7 +20,7 @@ APool::APool(QObject *parent) : QObject(parent)
 
 }
 
-void APool::addDatabase(const QUrl &connectionInfo, const QString &connectionName)
+void APool::addDatabase(const QString &connectionInfo, const QString &connectionName)
 {
     if (!m_connectionPool.contains(connectionName)) {
         APoolInternal pool;
@@ -35,11 +35,12 @@ static void pushDatabaseBack(const QString &connectionName, ADatabasePrivate *pr
 {
     auto it = m_connectionPool.find(connectionName);
     if (it != m_connectionPool.end()) {
-        qDebug(ASQL_POOL) << "Returning database connection to pool" << connectionName << priv;
         APoolInternal &iPool = it.value();
-        if (iPool.maxIdleConnections > iPool.pool.size()) {
+        if (iPool.pool.size() >= iPool.maxIdleConnections || priv->driver->state() == ADatabase::Disconnected) {
+            qDebug(ASQL_POOL) << "Deleting database connection due max idle connections or it is not open" << iPool.maxIdleConnections << iPool.pool.size() << priv->driver->isOpen();
             delete priv;
         } else {
+            qDebug(ASQL_POOL) << "Returning database connection to pool" << connectionName << priv;
             iPool.pool.push_back(priv);
         }
     } else {
@@ -58,7 +59,7 @@ ADatabase APool::database(const QString &connectionName)
             db.d = QSharedPointer<ADatabasePrivate>(new ADatabasePrivate(iPool.connectionInfo), [connectionName] (ADatabasePrivate *priv) {
                     pushDatabaseBack(connectionName, priv);
             });
-            db.open({});
+            db.open();
         } else {
             qDebug(ASQL_POOL) << "Reusing a database connection from pool" << connectionName;
             ADatabasePrivate *priv = iPool.pool.takeLast();
